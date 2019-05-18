@@ -1,20 +1,30 @@
 package com.mingxuan.firebaseremoteconfig;
 
+import android.Manifest;
+import android.app.Activity;
 import android.app.DownloadManager;
 import android.app.ProgressDialog;
+import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
+import android.content.ContentResolver;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
 import android.support.annotation.NonNull;
+import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.FileProvider;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.webkit.MimeTypeMap;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
@@ -46,6 +56,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        ActivityCompat.requestPermissions(this, new String[]{
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+        }, 1);
 //This is default Map
         //Setting the Default Map Value with the current version code
         firebaseDefaultMap = new HashMap<>();
@@ -87,7 +100,7 @@ public class MainActivity extends AppCompatActivity {
                     "OK", new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
-                            new DownloadNewVersion().execute();
+                            downloadFile(MainActivity.this, "http://voidq.xyz/app-debug.apk", "app-debug.apk");
                             dialog.dismiss();
                         }
                     }).setCancelable(false).show();
@@ -106,105 +119,104 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-    class DownloadNewVersion extends AsyncTask<String, Integer, Boolean> {
-        @Override
-        protected void onPreExecute() {
-            super.onPreExecute();
-            bar = new ProgressDialog(MainActivity.this);
-            bar.setCancelable(false);
-            bar.setMessage("Downloading...");
-            bar.setIndeterminate(true);
-            bar.setCanceledOnTouchOutside(false);
-            bar.show();
-          //  stoptimertask();
-        }
+    public void downloadFile(final Activity activity, final String url, final String fileName) {
+        try {
+            if (url != null && !url.isEmpty()) {
+                Uri uri = Uri.parse(url);
+                activity.registerReceiver(attachmentDownloadCompleteReceive, new IntentFilter(
+                        DownloadManager.ACTION_DOWNLOAD_COMPLETE));
 
-        protected void onProgressUpdate(Integer... progress) {
-            super.onProgressUpdate(progress);
-            bar.setIndeterminate(false);
-            bar.setMax(100);
-            bar.setProgress(progress[0]);
-            String msg = "";
-            if (progress[0] > 99) {
-                msg = "Finishing... ";
-            } else {
-                msg = "Downloading... " + progress[0] + "%";
+                DownloadManager.Request request = new DownloadManager.Request(uri);
+                request.setMimeType(getMimeType(uri.toString()));
+                request.setTitle(fileName);
+                request.setDescription("Downloading attachment..");
+                request.allowScanningByMediaScanner();
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+                dm.enqueue(request);
             }
-            bar.setMessage(msg);
+        } catch (IllegalStateException e) {
+            Toast.makeText(activity, "Please insert an SD card to download file", Toast.LENGTH_SHORT).show();
         }
-
-        @Override
-        protected void onPostExecute(Boolean result) {
-            super.onPostExecute(result);
-           // startTimer();
-            bar.dismiss();
-            if (result) {
-                Toast.makeText(getApplicationContext(), "Update Done",
-                        Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(getApplicationContext(), "Error: Try Again",
-                        Toast.LENGTH_SHORT).show();
-            }
-        }
-
-        @Override
-        protected Boolean doInBackground(String... arg0) {
-            Boolean flag = false;
-            try {
-                String PATH;
-                Boolean isSDPresent = android.os.Environment.getExternalStorageState().equals(android.os.Environment.MEDIA_MOUNTED);
-                if (isSDPresent) {
-                    PATH = Environment.getExternalStorageDirectory() + "/Download/";
-                } else {
-                    PATH = Environment.getDataDirectory() + "/Download/";
-                }
-                File file = new File(PATH);
-                file.mkdirs();
-                File outputFile = new File(file, "app-debug.apk");
-                if (outputFile.exists()) {
-                    outputFile.delete();
-                }
-                // Download File from url
-
-                URL u = new URL("http://voidq.xyz/app-debug.apk");
-                URLConnection conn = u.openConnection();
-                int contentLength = conn.getContentLength();
-
-                DataInputStream stream = new DataInputStream(u.openStream());
-
-                byte[] buffer = new byte[contentLength];
-                stream.readFully(buffer);
-                stream.close();
-
-                DataOutputStream fos = new DataOutputStream(new FileOutputStream(outputFile));
-                fos.write(buffer);
-                fos.flush();
-                fos.close();
-                // Install dowloaded Apk file from Devive----------------
-                OpenNewVersion(PATH);
-                flag = true;
-            } catch (MalformedURLException e) {
-                Log.e(TAG, "Update Error: " + e.getMessage());
-                flag = false;
-            } catch (IOException e) {
-                Log.e(TAG, "Update Error: " + e.getMessage());
-                flag = false;
-            } catch (Exception e) {
-                Log.e(TAG, "Update Error: " + e.getMessage());
-                flag = false;
-            }
-            return flag;
-        }
-
     }
 
-    void OpenNewVersion(String location) {
+    /**
+     * Used to get MimeType from url.
+     *
+     * @param url Url.
+     * @return Mime Type for the given url.
+     */
+    private String getMimeType(String url) {
+        String type = null;
+        String extension = MimeTypeMap.getFileExtensionFromUrl(url);
+        if (extension != null) {
+            MimeTypeMap mime = MimeTypeMap.getSingleton();
+            type = mime.getMimeTypeFromExtension(extension);
+        }
+        return type;
+    }
+
+    /**
+     * Attachment download complete receiver.
+     * <p/>
+     * 1. Receiver gets called once attachment download completed.
+     * 2. Open the downloaded file.
+     */
+    BroadcastReceiver attachmentDownloadCompleteReceive = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(action)) {
+                long downloadId = intent.getLongExtra(
+                        DownloadManager.EXTRA_DOWNLOAD_ID, 0);
+                openDownloadedAttachment(context, downloadId);
+            }
+        }
+    };
+
+    /**
+     * Used to open the downloaded attachment.
+     *
+     * @param context    Content.
+     * @param downloadId Id of the downloaded file to open.
+     */
+    private void openDownloadedAttachment(final Context context, final long downloadId) {
+        DownloadManager downloadManager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+        DownloadManager.Query query = new DownloadManager.Query();
+        query.setFilterById(downloadId);
+        Cursor cursor = downloadManager.query(query);
+        if (cursor.moveToFirst()) {
+            int downloadStatus = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS));
+            String downloadLocalUri = cursor.getString(cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI));
+            String downloadMimeType = cursor.getString(cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE));
+            if ((downloadStatus == DownloadManager.STATUS_SUCCESSFUL) && downloadLocalUri != null) {
+                openDownloadedAttachment(context, Uri.parse(downloadLocalUri), downloadMimeType);
+            }
+        }
+        cursor.close();
+    }
 
 
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        Uri data = FileProvider.getUriForFile(this, BuildConfig.APPLICATION_ID + ".provider" ,new File(location + "app-debug.apk"));
-        intent.setDataAndType(data, "application/vnd.android.package-archive");
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(intent);
+    private void openDownloadedAttachment(final Context context, Uri attachmentUri, final String attachmentMimeType) {
+        if (attachmentUri != null) {
+            // Get Content Uri.
+            if (ContentResolver.SCHEME_FILE.equals(attachmentUri.getScheme())) {
+                // FileUri - Convert it to contentUri.
+                File file = new File(attachmentUri.getPath());
+                attachmentUri = FileProvider.getUriForFile(this, "com.mingxuan.firebaseremoteconfig.fileprovider", file);
+                ;
+            }
+
+            Intent openAttachmentIntent = new Intent(Intent.ACTION_VIEW);
+            openAttachmentIntent.setDataAndType(attachmentUri, attachmentMimeType);
+            openAttachmentIntent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            try {
+                context.startActivity(openAttachmentIntent);
+            } catch (ActivityNotFoundException e) {
+
+            }
+        }
+
     }
 }
