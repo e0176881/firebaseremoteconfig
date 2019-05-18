@@ -56,6 +56,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        //needed to check permission
         ActivityCompat.requestPermissions(this, new String[]{
                 Manifest.permission.WRITE_EXTERNAL_STORAGE
         }, 1);
@@ -117,7 +119,13 @@ public class MainActivity extends AppCompatActivity {
         }
         return -1;
     }
+    @Override
+    public void onResume(){
+        super.onResume();
+       // check if latest version again after installation
+        checkForUpdate();
 
+    }
 
     public void downloadFile(final Activity activity, final String url, final String fileName) {
         try {
